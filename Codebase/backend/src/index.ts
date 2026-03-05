@@ -1,11 +1,9 @@
-import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
-import { createServer } from 'http';
-import { Server } from 'socket.io';
-import { authenticate } from './middleware/auth.js';
-import { setupChatSocket } from './websocket/chat.js';
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { logger } from 'hono/logger';
+import { HTTPException } from 'hono/http-exception';
 
+// Import route handlers (we'll create Hono versions)
 import proposalRoutes from './routes/proposals.js';
 import chatRoutes from './routes/chat.js';
 import quoteRoutes from './routes/quotes.js';
@@ -22,42 +20,66 @@ import slaRoutes from './routes/sla.js';
 import templateRoutes from './routes/templates.js';
 import analyticsRoutes from './routes/analytics.js';
 
-const app = express();
-const httpServer = createServer(app);
+// Environment bindings type
+type Bindings = {
+  SUPABASE_URL: string;
+  SUPABASE_SERVICE_ROLE_KEY: string;
+  RESEND_API_KEY: string;
+  WHATSAPP_API_KEY: string;
+  JWT_SECRET: string;
+  FRONTEND_URL: string;
+  DB: D1Database;
+};
 
-const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+const app = new Hono<{ Bindings: Bindings }>();
 
-const io = new Server(httpServer, {
-  cors: { origin: frontendUrl, credentials: true },
+// Middleware
+app.use(logger());
+app.use(cors({
+  origin: (origin, c) => c.env.FRONTEND_URL || 'http://localhost:5173',
+  allowHeaders: ['Content-Type', 'Authorization'],
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  credentials: true,
+}));
+
+// Health check
+app.get('/api/health', (c) => {
+  return c.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    environment: 'cloudflare-workers'
+  });
 });
 
-app.use(cors({ origin: frontendUrl, credentials: true }));
-app.use(express.json({ limit: '10mb' }));
+// Mount routes
+app.route('/api/proposals', proposalRoutes);
+app.route('/api/chat', chatRoutes);
+app.route('/api/quotes', quoteRoutes);
+app.route('/api/agreements', agreementRoutes);
+app.route('/api/projects', projectRoutes);
+app.route('/api/milestones', milestoneRoutes);
+app.route('/api/tasks', taskRoutes);
+app.route('/api/deliverables', deliverableRoutes);
+app.route('/api/revisions', revisionRoutes);
+app.route('/api/team', teamRoutes);
+app.route('/api/invoices', paymentRoutes);
+app.route('/api/notifications', notificationRoutes);
+app.route('/api/sla', slaRoutes);
+app.route('/api/templates', templateRoutes);
+app.route('/api/analytics', analyticsRoutes);
 
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// 404 handler
+app.notFound((c) => {
+  return c.json({ error: 'Not Found', path: c.req.path }, 404);
 });
 
-app.use('/api/proposals', authenticate, proposalRoutes);
-app.use('/api/chat', authenticate, chatRoutes);
-app.use('/api/quotes', authenticate, quoteRoutes);
-app.use('/api/agreements', authenticate, agreementRoutes);
-app.use('/api/projects', authenticate, projectRoutes);
-app.use('/api/projects', authenticate, milestoneRoutes);
-app.use('/api/projects', authenticate, taskRoutes);
-app.use('/api/projects', authenticate, deliverableRoutes);
-app.use('/api/projects', authenticate, revisionRoutes);
-app.use('/api/team', authenticate, teamRoutes);
-app.use('/api/invoices', authenticate, paymentRoutes);
-app.use('/api/notifications', authenticate, notificationRoutes);
-app.use('/api/sla', authenticate, slaRoutes);
-app.use('/api/templates', authenticate, templateRoutes);
-app.use('/api/analytics', authenticate, analyticsRoutes);
-
-setupChatSocket(io);
-
-const PORT = process.env.PORT || 3001;
-
-httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// Error handler
+app.onError((err, c) => {
+  if (err instanceof HTTPException) {
+    return err.getResponse();
+  }
+  console.error('Error:', err);
+  return c.json({ error: 'Internal Server Error' }, 500);
 });
+
+export default app;
