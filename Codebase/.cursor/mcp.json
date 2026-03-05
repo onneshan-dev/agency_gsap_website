@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "pencil": {
+      "command": "npx",
+      "args": ["-y", "@pencil/mcp-server"],
+      "env": {}
+    }
+  }
+}
